@@ -1,0 +1,58 @@
+#Disable AzContext inheritence
+    Disable-AzContextAutosave –Scope Process
+
+#Import your Credential object from the Automation Account
+    $SQLServerCred = Get-AutomationPSCredential -Name "AzureLogs"
+    #Import the SQL Server Name from the Automation variable.
+    $SQL_Server_Name = Get-AutomationVariable -Name "AzureLogs_instance"
+    #Import the SQL DB from the Automation variable.
+    $SQL_DB_Name = Get-AutomationVariable -Name "AzureLogs_db"
+    #Import the Storage account key from the Automation variable.
+    $StorageAccountKey = Get-AutomationVariable -Name "azuchautomationStorageKey"
+
+
+#Logging in to Azure...
+    try
+    {
+        "Logging in to Azure..."
+        $tenantId = "f66b6bd3-ebc2-4f54-8769-d22858de97c5"
+        $clientId = "2cf6bf34-68ca-414b-8ce0-3eda9cef1152"
+        $clientSecret = Get-AutomationVariable -Name "MailSendForDigitalClientSecret"
+
+        $securePassword = ConvertTo-SecureString -String $clientSecret -AsPlainText -Force
+        $credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $clientId, $securePassword
+        
+        Connect-AzAccount -ServicePrincipal -Credential $credential -Tenant $tenantId
+    }
+    catch
+    {
+        Write-Error -Message $_.Exception
+        throw $_.Exception
+    }
+    
+    $ErrorActionPreference = "SilentlyContinue"
+    
+    # Get all subscriptions
+    $subscriptions = Get-AzSubscription
+    
+    # Loop through each subscription
+    foreach ($subscription in $subscriptions)
+    {
+        # Check diagnostic settings for the Activity Log at the subscription level
+        $activityLogAlerts = Get-AzActivityLogAlert
+        
+        # Check if there are any diagnostic settings with Activity Log export enabled
+        if (-not $activityLogAlerts)
+        {
+            $Output=    New-Object -TypeName PSObject -Property @{
+                SubscriptionID  = $subscription.SubscriptionId
+                ActivityLoggingStatus = "Not Enabled"
+                SubsciptionName     = $subscription.Name
+            } | Select-object SubscriptionID, ActivityLoggingStatus, SubsciptionName
+            $csvFilePath = "activity_logging_report.csv"
+            $Output | Export-Csv "$env:TEMP/$csvFilePath" -Notype -Append
+        }
+
+    }
+    $Context = New-AzureStorageContext -StorageAccountName "azuchautomation" -StorageAccountKey "$StorageAccountKey"
+    Set-AzureStorageBlobContent -Context $Context -Container "logs" -File "$env:TEMP/$csvFilePath" -Blob "$csvFilePath"
