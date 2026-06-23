@@ -15,8 +15,8 @@
     try
     {
         "Logging in to Azure..."
-        $tenantId = "f66b6bd3-ebc2-4f54-8769-d22858de97c5"
-        $clientId = "2cf6bf34-68ca-414b-8ce0-3eda9cef1152"
+        $tenantId = "XXXXXXXXXX"
+        $clientId = "XXXXXXXXXX"
         $clientSecret = Get-AutomationVariable -Name "MailSendForDigitalClientSecret"
 
         $securePassword = ConvertTo-SecureString -String $clientSecret -AsPlainText -Force
