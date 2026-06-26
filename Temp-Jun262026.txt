@@ -1,0 +1,110 @@
+[array]$Subscriptions = Get-AzSubscription | Where-Object { $specificSubscriptionIds -contains $_.Id }
+
+if ($Subscriptions) {
+    foreach ($Subscription in $Subscriptions) {
+        Write-Verbose "Changing to Subscription $($Subscription.Name)" -Verbose
+
+        $Context  = Set-AzContext -TenantId $Subscription.TenantId -SubscriptionId $Subscription.Id -Force
+        $Name     = $Subscription.Name
+        $TenantId = $Subscription.TenantId
+        $SubId    = $Subscription.Id
+        $Date     = Get-Date -Format "yyyy-MM-dd"
+
+        $Disks = Get-AzDisk | Where-Object { $_.DiskState -eq "Unattached" -and $null -eq $_.ManagedBy }
+
+        if (-not $Disks -or $Disks.Count -eq 0) {
+            Write-Host "No unattached disks found in subscription '$Name'" -ForegroundColor Cyan
+            continue
+        }
+
+        Write-Host "We found a count of $($Disks.Count) unattached disks in subscription '$Name'" -ForegroundColor Yellow
+        Write-Host "Getting usage details for all resources in this subscription"
+
+        $All_Az_Consumption_Usage_Details = Get-AzConsumptionUsageDetail
+
+        Write-Host "Building usage lookup"
+        $usageLookup = @{}
+        foreach ($item in $All_Az_Consumption_Usage_Details) {
+            if (-not [string]::IsNullOrWhiteSpace($item.InstanceId)) {
+                if (-not $usageLookup.ContainsKey($item.InstanceId)) {
+                    $usageLookup[$item.InstanceId] = [PSCustomObject]@{
+                        PreTaxCost = 0.0
+                        Currency   = $item.Currency
+                    }
+                }
+
+                $usageLookup[$item.InstanceId].PreTaxCost += [double]($item.PretaxCost ?? 0)
+                if (-not $usageLookup[$item.InstanceId].Currency -and $item.Currency) {
+                    $usageLookup[$item.InstanceId].Currency = $item.Currency
+                }
+            }
+        }
+
+        Write-Host "Preparing output objects"
+        $results = foreach ($Disk in $Disks) {
+            Write-Host "Processing disk '$($Disk.Name)'"
+
+            $costInfo = $usageLookup[$Disk.Id]
+            $preTax   = if ($costInfo) { $costInfo.PreTaxCost } else { 0 }
+            $currency = if ($costInfo) { $costInfo.Currency } else { $null }
+
+            [PSCustomObject]@{
+                DiskName              = $Disk.Name
+                ResourceGroup         = $Disk.ResourceGroupName
+                Subscription          = $Name
+                SubscriptionID        = $SubId
+                ResourceId            = $Disk.Id
+                Location              = $Disk.Location
+                DiskSize              = $Disk.DiskSizeGB
+                Disk_Cost_PreTaxCost  = $preTax
+                Disk_Cost_Currency    = $currency
+            }
+        }
+
+        $FileName = "OrphanedDisks-$Name-$Date.csv"
+        $CsvPath  = Join-Path $env:TEMP $FileName
+        $results | Export-Csv $CsvPath -NoTypeInformation
+
+        Write-Host "Writing results to SQL"
+
+        $sqlConnection = New-Object System.Data.SqlClient.SqlConnection
+        $sqlConnection.ConnectionString = "Server=$SQL_Server_Name;Database=$SQL_DB_Name;User ID=$($SQLServerCred.UserName);Password=$($SQLServerCred.GetNetworkCredential().Password);Encrypt=True;TrustServerCertificate=False;"
+        $sqlConnection.Open()
+
+        $sqlCmd = $sqlConnection.CreateCommand()
+        $sqlCmd.CommandText = @"
+INSERT INTO Azure_OrphanedDisks_Logs
+(Disk, ResourceId, RG, Subscription, SubscriptionID, DiskSize, Location, Disk_Cost_PreTaxCost, Disk_Cost_Currency, [Date])
+VALUES
+(@Disk, @ResourceId, @RG, @Subscription, @SubscriptionID, @DiskSize, @Location, @DiskCost, @Currency, GETDATE())
+"@
+
+        $null = $sqlCmd.Parameters.Add("@Disk", [System.Data.SqlDbType]::NVarChar, 255)
+        $null = $sqlCmd.Parameters.Add("@ResourceId", [System.Data.SqlDbType]::NVarChar, 500)
+        $null = $sqlCmd.Parameters.Add("@RG", [System.Data.SqlDbType]::NVarChar, 255)
+        $null = $sqlCmd.Parameters.Add("@Subscription", [System.Data.SqlDbType]::NVarChar, 255)
+        $null = $sqlCmd.Parameters.Add("@SubscriptionID", [System.Data.SqlDbType]::NVarChar, 100)
+        $null = $sqlCmd.Parameters.Add("@DiskSize", [System.Data.SqlDbType]::Int)
+        $null = $sqlCmd.Parameters.Add("@Location", [System.Data.SqlDbType]::NVarChar, 100)
+        $null = $sqlCmd.Parameters.Add("@DiskCost", [System.Data.SqlDbType]::Decimal)
+        $null = $sqlCmd.Parameters["@DiskCost"].Precision = 18
+        $null = $sqlCmd.Parameters["@DiskCost"].Scale = 4
+        $null = $sqlCmd.Parameters.Add("@Currency", [System.Data.SqlDbType]::NVarChar, 20)
+
+        foreach ($row in $results) {
+            $sqlCmd.Parameters["@Disk"].Value           = $row.DiskName
+            $sqlCmd.Parameters["@ResourceId"].Value     = $row.ResourceId
+            $sqlCmd.Parameters["@RG"].Value             = $row.ResourceGroup
+            $sqlCmd.Parameters["@Subscription"].Value   = $row.Subscription
+            $sqlCmd.Parameters["@SubscriptionID"].Value = $row.SubscriptionID
+            $sqlCmd.Parameters["@DiskSize"].Value       = $row.DiskSize
+            $sqlCmd.Parameters["@Location"].Value       = $row.Location
+            $sqlCmd.Parameters["@DiskCost"].Value       = [decimal]$row.Disk_Cost_PreTaxCost
+            $sqlCmd.Parameters["@Currency"].Value       = if ($row.Disk_Cost_Currency) { $row.Disk_Cost_Currency } else { [DBNull]::Value }
+
+            $sqlCmd.ExecuteNonQuery() | Out-Null
+        }
+
+        $sqlConnection.Close()
+    }
+}
