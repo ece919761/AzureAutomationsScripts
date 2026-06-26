@@ -1,0 +1,3 @@
+To remove the Unknown/GhostDevice/Grayesoutdevice from Device manager:
+
+Get-PnpDevice | Where-Object { $_.Status -eq "Unknown" } | ForEach-Object { pnputil /remove-device $_.InstanceId }
