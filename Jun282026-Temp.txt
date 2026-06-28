@@ -107,3 +107,23 @@ VALUES
 
         $sqlConnection.Close()
         
+
+
+======================================
+
+$SpQuery = @"
+EXEC dbo.usp_GetOrphanedDiskCostBySubscriptionDate
+    @SubscriptionID = N'$SubId',
+    @TargetDate = '$Date';
+"@
+
+$spResult = Invoke-Sqlcmd `
+    -ServerInstance $SQL_Server_Name `
+    -Database $SQL_DB_Name `
+    -Credential $SQLServerCred `
+    -Query $SpQuery `
+    -Encrypt
+
+$totalDiskCostForSubscription = if ($spResult) { [decimal]$spResult[0].TotalDiskCost } else { 0 }
+
+Write-Host "Total orphaned disk cost for subscription '$Name' on $Date is $totalDiskCostForSubscription"
