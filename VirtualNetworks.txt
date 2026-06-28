@@ -1,0 +1,156 @@
+#Disable AzContext inheritence
+    Disable-AzContextAutosave –Scope Process
+
+#Import your Credential object from the Automation Account
+    $SQLServerCred = Get-AutomationPSCredential -Name "AzureLogs"
+    #Import the SQL Server Name from the Automation variable.
+    $SQL_Server_Name = Get-AutomationVariable -Name "AzureLogs_instance"
+    #Import the SQL DB from the Automation variable.
+    $SQL_DB_Name = Get-AutomationVariable -Name "AzureLogs_db"
+    #Import the Storage account key from the Automation variable.
+    $StorageAccountKey = Get-AutomationVariable -Name "azuchautomationStorageKey"
+
+
+#Logging in to Azure...
+        try
+    {
+        "Logging in to Azure..."
+        $tenantId = "f66b6bd3-ebc2-4f54-8769-d22858de97c5"
+$clientId = "2cf6bf34-68ca-414b-8ce0-3eda9cef1152"
+$clientSecret = Get-AutomationVariable -Name "MailSendForDigitalClientSecret"
+
+$securePassword = ConvertTo-SecureString -String $clientSecret -AsPlainText -Force
+$credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $clientId, $securePassword
+
+Connect-AzAccount -ServicePrincipal -Credential $credential -Tenant $tenantId 
+    }
+    catch {
+        Write-Error -Message $_.Exception
+        throw $_.Exception
+    }
+    
+    $ErrorActionPreference = "SilentlyContinue"
+      
+
+ 
+#Get Current Context
+$CurrentContext = Get-AzContext
+ $specificSubscriptionIds = @(
+    "f088d92f-5d65-44ad-b9e4-3e9fc800372f"
+    
+    # Add more subscription IDs as needed
+)
+#$Tags = @() 
+$Subscriptions = Get-AzSubscription 
+#| Where-Object { $specificSubscriptionIds -contains $_.Id }
+foreach ($Subscription in $Subscriptions)
+       { 
+   
+         $Output= $null
+         $Context = Set-AzContext -TenantId $Subscription.TenantId -SubscriptionId $Subscription.Id -Force
+         $Name     = $Subscription.Name
+         $TenantId = $Subscription.TenantId
+         $SubId    = $Subscription.Id
+         $vnets = Get-AzVirtualNetwork 
+             foreach($vnet in $vnets)
+                    {
+                        if($null-eq $vnet.Subnets)
+                        {
+                            # $NateGatewayName = if($subnet.NatGateWay.Id){
+                            #     ($subnet.NatGateWay.Id -split '/')[-1]
+                            # }
+                            # else{
+                            #     "None"
+                            # }
+                            $NateGatewayName = "None"
+                            $Output=    New-Object -TypeName PSObject -Property @{ 
+                                VNetName = $vnet.Name
+                                RGName = $vnet.ResourceGroupName
+                                SubscriptionName = $Name
+                                SubscriptionId = $SubId
+                                SubnetName = $NateGatewayName
+                                SubnetPrefix = $NateGatewayName
+                                NatGateWay =    $NateGatewayName 
+                                           } | Select-object  SubscriptionName, SubscriptionId, RGName, VNetName, SubnetName, SubnetPrefix, NatGateWay
+                                $CurrentDate = Get-Date -Format "yyyy-MM-dd"
+                                $FileName = "VNETs_$CurrentDate.csv"
+                                #Export the result into a csv file in to Temp environment
+                                $Output | Export-CSV "$env:TEMP/$FileName"  -NoType -Append
+                        }                     
+                   
+    }
+    }
+ $Context = New-AzureStorageContext -StorageAccountName "azuchautomation" -StorageAccountKey "$StorageAccountKey"
+             Set-AzureStorageBlobContent -Context $Context -Container "logs" -File "$env:TEMP/$FileName" -Blob "$FileName"
+  
+$FileAttachment = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:TEMP/$FileName"))
+   
+    $MailRecipient = "krishna.dhara@harman.com"
+    #$MailRecipient1 = "Avinash.GH@harman.com"
+    #$MailRecipient2 = "Joel.Doredla@harman.com"
+    $MailSubject = "Azure Subscriptions list as of $CurrentDate"
+    $MailContent = "Dear Team, `r`n`r`
+                     <p>Greetings!</p>`r`n`r`
+                     <p>Please find the attached list of Azure subscriptions along with tags.</p>`r`n`r`
+                     `r`n`r`
+                     Best Regards,<br>`r`n`r`
+                     Azure Cloud Team"
+    $MailSender = "AzureReports@harman.com"
+    $Filename1="VirtualNetworksList.csv"
+    
+        
+# Variables
+
+#Connect to GRAPH API
+$tokenBody = @{
+    Grant_Type    = "client_credentials"
+    Scope         = "https://graph.microsoft.com/.default"
+    Client_Id     = $clientId
+    Client_Secret = $clientSecret
+}
+$tokenResponse = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$tenantID/oauth2/v2.0/token" -Method POST -Body $tokenBody
+$headers = @{
+    "Authorization" = "Bearer $($tokenResponse.access_token)"
+    "Content-type"  = "application/json"
+}
+
+#Send Mail    
+$URLsend = "https://graph.microsoft.com/v1.0/users/$MailSender/sendMail"
+
+ 
+
+
+$BodyJsonsend = @"
+                    {
+                        "message": {
+                          "subject": "$MailSubject",
+                          "body": {
+                            "contentType": "HTML",
+                            "content": "$MailContent"                                                 
+                                   },
+                           "attachments": [
+                                        {
+                                         "@odata.type": "#microsoft.graph.fileAttachment",
+                                         "name": "$Filename1",
+                                         "contentType": "text/plain",
+                                         "contentBytes": "$FileAttachment"
+                                         }
+                                          ],                              
+                          "toRecipients": [
+                            {
+                              "emailAddress": {
+                                "address": "$MailRecipient"                                
+                              }
+                            }
+                          ]
+                        },
+                        "saveToSentItems": "false"
+                      }
+"@
+
+Invoke-RestMethod -Method POST -Uri $URLsend -Headers $headers -Body $BodyJsonsend 
+
+
+
+
+
