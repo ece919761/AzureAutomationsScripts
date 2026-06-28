@@ -127,3 +127,135 @@ $spResult = Invoke-Sqlcmd `
 $totalDiskCostForSubscription = if ($spResult) { [decimal]$spResult[0].TotalDiskCost } else { 0 }
 
 Write-Host "Total orphaned disk cost for subscription '$Name' on $Date is $totalDiskCostForSubscription"
+=================================================================================================
+
+
+Write-Host "Writing results to SQL"
+
+$sqlConnection = New-Object System.Data.SqlClient.SqlConnection
+$sqlConnection.ConnectionString = "Server=$SQL_Server_Name;Database=$SQL_DB_Name;User ID=$($SQLServerCred.UserName);Password=$($SQLServerCred.GetNetworkCredential().Password);Encrypt=True;TrustServerCertificate=False;"
+$sqlConnection.Open()
+
+try {
+    #
+    # 1. Insert orphaned disk rows
+    #
+    $insertCmd = $sqlConnection.CreateCommand()
+    $insertCmd.CommandText = @"
+INSERT INTO Azure_OrphanedDisks_Logs
+(
+    Disk,
+    ResourceId,
+    RG,
+    Subscription,
+    SubscriptionID,
+    DiskSize,
+    Location,
+    Disk_Cost_PreTaxCost,
+    Disk_Cost_Currency,
+    [Date]
+)
+VALUES
+(
+    @Disk,
+    @ResourceId,
+    @RG,
+    @Subscription,
+    @SubscriptionID,
+    @DiskSize,
+    @Location,
+    @DiskCost,
+    @Currency,
+    GETDATE()
+)
+"@
+    $insertCmd.CommandType = [System.Data.CommandType]::Text
+
+    [void]$insertCmd.Parameters.Add("@Disk", [System.Data.SqlDbType]::NVarChar, 255)
+    [void]$insertCmd.Parameters.Add("@ResourceId", [System.Data.SqlDbType]::NVarChar, 500)
+    [void]$insertCmd.Parameters.Add("@RG", [System.Data.SqlDbType]::NVarChar, 255)
+    [void]$insertCmd.Parameters.Add("@Subscription", [System.Data.SqlDbType]::NVarChar, 255)
+    [void]$insertCmd.Parameters.Add("@SubscriptionID", [System.Data.SqlDbType]::NVarChar, 100)
+    [void]$insertCmd.Parameters.Add("@DiskSize", [System.Data.SqlDbType]::Int)
+    [void]$insertCmd.Parameters.Add("@Location", [System.Data.SqlDbType]::NVarChar, 100)
+
+    [void]$insertCmd.Parameters.Add("@DiskCost", [System.Data.SqlDbType]::Decimal)
+    $insertCmd.Parameters["@DiskCost"].Precision = 18
+    $insertCmd.Parameters["@DiskCost"].Scale = 4
+
+    [void]$insertCmd.Parameters.Add("@Currency", [System.Data.SqlDbType]::NVarChar, 20)
+
+    foreach ($row in $results) {
+        $insertCmd.Parameters["@Disk"].Value           = $row.DiskName
+        $insertCmd.Parameters["@ResourceId"].Value     = $row.ResourceId
+        $insertCmd.Parameters["@RG"].Value             = $row.ResourceGroup
+        $insertCmd.Parameters["@Subscription"].Value   = $row.Subscription
+        $insertCmd.Parameters["@SubscriptionID"].Value = $row.SubscriptionID
+        $insertCmd.Parameters["@DiskSize"].Value       = [int]$row.DiskSize
+        $insertCmd.Parameters["@Location"].Value       = $row.Location
+        $insertCmd.Parameters["@DiskCost"].Value       = [decimal]$row.Disk_Cost_PreTaxCost
+
+        if ([string]::IsNullOrWhiteSpace($row.Disk_Cost_Currency)) {
+            $insertCmd.Parameters["@Currency"].Value = [DBNull]::Value
+        }
+        else {
+            $insertCmd.Parameters["@Currency"].Value = $row.Disk_Cost_Currency
+        }
+
+        [void]$insertCmd.ExecuteNonQuery()
+    }
+
+    Write-Host "Disk rows inserted successfully for subscription '$Name'" -ForegroundColor Green
+
+    #
+    # 2. Call stored procedure to get the sum for same subscription and same date
+    #
+    $spCmd = $sqlConnection.CreateCommand()
+    $spCmd.CommandText = "dbo.usp_GetOrphanedDiskCostBySubscriptionDate"
+    $spCmd.CommandType = [System.Data.CommandType]::StoredProcedure
+
+    [void]$spCmd.Parameters.Add("@SubscriptionID", [System.Data.SqlDbType]::NVarChar, 100)
+    $spCmd.Parameters["@SubscriptionID"].Value = $SubId
+
+    [void]$spCmd.Parameters.Add("@TargetDate", [System.Data.SqlDbType]::Date)
+    $spCmd.Parameters["@TargetDate"].Value = [datetime]::ParseExact($Date, "yyyy-MM-dd", $null)
+
+    $reader = $spCmd.ExecuteReader()
+    $spTable = New-Object System.Data.DataTable
+    $spTable.Load($reader)
+    $reader.Close()
+
+    $totalDiskCostForSubscription = [decimal]0
+
+    if ($spTable.Rows.Count -gt 0) {
+        $firstRow = $spTable.Rows[0]
+
+        if ($spTable.Columns.Contains("TotalDiskCost") -and $firstRow["TotalDiskCost"] -ne [DBNull]::Value) {
+            $totalDiskCostForSubscription = [decimal]$firstRow["TotalDiskCost"]
+        }
+    }
+
+    Write-Host "Total orphaned disk cost for subscription '$Name' on $Date is $totalDiskCostForSubscription" -ForegroundColor Cyan
+
+    #
+    # 3. Example email body usage
+    #
+    $emailBody = @"
+Hello Team,
+
+Subscription Name : $Name
+Subscription ID   : $SubId
+Run Date          : $Date
+Total Orphaned Disk Cost : $totalDiskCostForSubscription
+
+Regards,
+Azure Automation
+"@
+
+    Write-Host $emailBody
+}
+finally {
+    if ($null -ne $sqlConnection -and $sqlConnection.State -eq 'Open') {
+        $sqlConnection.Close()
+    }
+}
