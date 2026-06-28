@@ -1,0 +1,153 @@
+#Disable AzContext inheritence
+Disable-AzContextAutosave –Scope Process
+
+#Import your Credential object from the Automation Account
+    $SQLServerCred = Get-AutomationPSCredential -Name "AzureLogs"
+    #Import the SQL Server Name from the Automation variable.
+    $SQL_Server_Name = Get-AutomationVariable -Name "AzureLogs_instance"
+    #Import the SQL DB from the Automation variable.
+    $SQL_DB_Name = Get-AutomationVariable -Name "AzureLogs_db"
+    #Import the Storage account key from the Automation variable.
+    $StorageAccountKey = Get-AutomationVariable -Name "azuchautomationStorageKey"
+
+
+#Logging in to Azure...
+        try
+    {
+        "Logging in to Azure...."
+        $tenantId = "f66b6bd3-ebc2-4f54-8769-d22858de97c5"
+$clientId = "2cf6bf34-68ca-414b-8ce0-3eda9cef1152"
+$clientSecret = Get-AutomationVariable -Name "MailSendForDigitalClientSecret"
+
+$securePassword = ConvertTo-SecureString -String $clientSecret -AsPlainText -Force
+$credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $clientId, $securePassword
+
+Connect-AzAccount -ServicePrincipal -Credential $credential -Tenant $tenantId 
+    }
+    catch {
+        Write-Error -Message $_.Exception
+        throw $_.Exception
+    }
+    
+    $ErrorActionPreference = "SilentlyContinue"
+      
+
+ 
+#Get Current Context
+$CurrentContext = Get-AzContext
+#  $specificSubscriptionIds = @(
+#     "5055f268-d70b-450c-bd4e-bd469b3c244e"
+    
+#     # Add more subscription IDs as needed
+# )
+$Tags = @()
+$mgGroups = Get-AzManagementGroup
+
+
+foreach ($mg in $mgGroups) {
+    $groupId = $mg.Id
+    $groupName = $mg.Name
+
+    try {
+        $subscriptions = Get-AzManagementGroupSubscription -GroupName $groupName
+
+        foreach ($sub in $subscriptions) {
+            # Extract Subscription ID from the full resource ID
+            $subId = ($sub.Id -split "/")[-1]
+            Set-AzContext -TenantId "f66b6bd3-ebc2-4f54-8769-d22858de97c5" -SubscriptionId $subId-Force
+            $resourceId = "/subscriptions/$subId"
+            $subscriptionDetails = Get-AzTag -ResourceId $resourceId
+
+            $tagObject = [ordered]@{
+                ManagementGroupName = $groupName
+                SubscriptionName    = $sub.DisplayName
+                SubscriptionId      = $subId
+                SubscriptionState   = $sub.State
+                TenantId            = $sub.Tenant
+            }
+            if ($subscriptionDetails.Properties.TagsProperty) {
+                foreach ($tagKey in $subscriptionDetails.Properties.TagsProperty.Keys) {
+                    $tagValue = $subscriptionDetails.Properties.TagsProperty[$tagKey]
+                    $tagObject[$tagKey] = $tagValue
+                }
+            }
+            $Tags += New-Object PSObject -Property $tagObject
+        }
+    } catch {
+        Write-Output "No subscriptions found or error for management group '$groupName'"
+    }
+}
+
+ # Export once after collecting all data
+$CurrentDate = Get-Date -Format "yyyy-MM-dd"
+$FileName = "AzureSubTagInfo_$CurrentDate.csv"
+$csvPath = "$env:TEMP\$FileName"
+$Tags | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+
+ $Context = New-AzStorageContext -StorageAccountName "azuchautomation" -StorageAccountKey "$StorageAccountKey"
+             Set-AzStorageBlobContent -Context $Context -Container "logs" -File "$env:TEMP/$FileName" -Blob "$FileName"
+  
+$FileAttachment = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:TEMP/$FileName"))
+   
+    $MailRecipient = "saheli.chakraborty@harman.com"
+    $MailSubject = "Report for Azure Subscriptions Info as of $CurrentDate"
+    $MailContent = "Dear Team, `r`n`r`
+                     <p>Greetings!</p>`r`n`r`
+                     <p>Please find the attached list of Azure subscriptions report along with tags information.</p>`r`n`r`
+                     `r`n`r`
+                     Best Regards,<br>`r`n`r`
+                     Azure Cloud Team"
+    $MailSender = "AzureReports@harman.com"
+    $Filename1="AzureSubTagInfo_$CurrentDate.csv"
+    
+        
+# Variables
+
+#Connect to GRAPH API
+$tokenBody = @{
+    Grant_Type    = "client_credentials"
+    Scope         = "https://graph.microsoft.com/.default"
+    Client_Id     = $clientId
+    Client_Secret = $clientSecret
+}
+$tokenResponse = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$tenantID/oauth2/v2.0/token" -Method POST -Body $tokenBody
+$headers = @{
+    "Authorization" = "Bearer $($tokenResponse.access_token)"
+    "Content-type"  = "application/json"
+}
+
+#Send Mail    
+$URLsend = "https://graph.microsoft.com/v1.0/users/$MailSender/sendMail"
+
+ 
+
+
+$BodyJsonsend = @"
+                    {
+                        "message": {
+                          "subject": "$MailSubject",
+                          "body": {
+                            "contentType": "HTML",
+                            "content": "$MailContent"                                                 
+                                   },
+                           "attachments": [
+                                        {
+                                         "@odata.type": "#microsoft.graph.fileAttachment",
+                                         "name": "$Filename1",
+                                         "contentType": "text/plain",
+                                         "contentBytes": "$FileAttachment"
+                                         }
+                                          ],                              
+                          "toRecipients": [
+                            {
+                              "emailAddress": {
+                                "address": "$MailRecipient"                                
+                              }
+                            }
+                          ]
+                        },
+                        "saveToSentItems": "false"
+                      }
+"@
+
+Invoke-RestMethod -Method POST -Uri $URLsend -Headers $headers -Body $BodyJsonsend 
