@@ -1,0 +1,54 @@
+# Requires: Az.Accounts, Az.Compute
+# Connect first: Connect-AzAccount
+# Optional: Connect-AzAccount -Tenant <TenantId>
+
+$ErrorActionPreference = 'Stop'
+
+$results = @()
+$subscriptions = Get-AzSubscription
+
+foreach ($sub in $subscriptions) {
+    try {
+        Set-AzContext -SubscriptionId $sub.Id -ErrorAction Stop | Out-Null
+
+        $orphanedDisks = Get-AzDisk | Where-Object {
+            $_.ManagedBy -eq $null -or $_.DiskState -eq 'Unattached'
+        }
+
+        foreach ($disk in $orphanedDisks) {
+            $results += [PSCustomObject]@{
+                SubscriptionName = $sub.Name
+                SubscriptionId   = $sub.Id
+                ResourceGroup    = $disk.ResourceGroupName
+                DiskName         = $disk.Name
+                Location         = $disk.Location
+                Sku              = $disk.Sku.Name
+                DiskSizeGB       = $disk.DiskSizeGB
+                DiskState        = $disk.DiskState
+                ManagedBy        = $disk.ManagedBy
+                Id               = $disk.Id
+            }
+        }
+    }
+    catch {
+        Write-Warning "Failed to process subscription $($sub.Name) [$($sub.Id)]: $($_.Exception.Message)"
+    }
+}
+
+$summary = $results |
+    Group-Object SubscriptionName |
+    Select-Object @{Name='SubscriptionName';Expression={$_.Name}},
+                  @{Name='OrphanedDiskCount';Expression={$_.Count}}
+
+$totalCount = $results.Count
+
+Write-Host "========== Orphaned Disk Summary ==========" -ForegroundColor Cyan
+$summary | Format-Table -AutoSize
+
+Write-Host ""
+Write-Host "Total orphaned disks across all subscriptions: $totalCount" -ForegroundColor Yellow
+
+# Optional export
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$results | Export-Csv -Path ".\OrphanedDisks_$timestamp.csv" -NoTypeInformation
+$summary | Export-Csv -Path ".\OrphanedDisks_Summary_$timestamp.csv" -NoTypeInformation
