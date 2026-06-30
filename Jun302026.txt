@@ -90,3 +90,7 @@ New-AzActivityLogAlert `
     ) `
     -ActionGroupId "<your-action-group-id>" `
     -Description "Alert when subscription tags are modified"
+
+
+
+5lh113Yt4m1g!
