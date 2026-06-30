@@ -1,0 +1,92 @@
+Step 1 — Custom Azure Policy to Deny Tag Modification
+
+
+
+{
+  "mode": "All",
+  "displayName": "Deny-Subscription-Tag-Modification",
+  "description": "Prevents all users from modifying or deleting tags at subscription scope.",
+  "policyRule": {
+    "if": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Resources/subscriptions"
+            },
+            {
+              "field": "Microsoft.Resources/subscriptions/tagName",
+              "exists": "true"
+            }
+          ]
+        },
+        {
+          "field": "type",
+          "equals": "Microsoft.Resources/tags"
+        }
+      ]
+    },
+    "then": {
+      "effect": "deny"
+    }
+  }
+}
+
+
+========================================================================
+
+Step 2: Custom RBAC Role for Allowed Tag Editors
+
+{
+  "Name": "Tag Editor - Subscription",
+  "Description": "Allows reading and modifying subscription-level tags only",
+  "IsCustom": true,
+  "Actions": [
+    "Microsoft.Resources/subscriptions/read",
+    "Microsoft.Resources/tags/read",
+    "Microsoft.Resources/tags/write",
+    "Microsoft.Resources/tags/delete"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/<your-subscription-id>"
+  ]
+}
+
+
+
+======================================================================
+
+Step 3 — Policy Exemption for Allowed Users (Critical Step)
+
+
+# Exempt a specific AAD group (e.g. "Tag-Admins") from the deny policy
+New-AzPolicyExemption `
+    -Name "Tag-Admins-Exemption" `
+    -DisplayName "Exempt Tag Admins from Tag Deny Policy" `
+    -ExemptionCategory "Waiver" `
+    -PolicyAssignmentId "/subscriptions/<sub-id>/providers/Microsoft.Authorization/policyAssignments/Deny-Tag-Modification-Assignment" `
+    -Scope "/subscriptions/<sub-id>" `
+    -Description "Allows designated Tag Admins to modify subscription tags"
+
+
+=============================================================================
+
+
+Step 4 — Add an Alert for Audit Trail (Recommended)
+
+# Alert whenever tags are modified on the subscription
+New-AzActivityLogAlert `
+    -Name "Tag-Modification-Alert" `
+    -ResourceGroupName "Governance-RG" `
+    -Location "global" `
+    -Scope "/subscriptions/<sub-id>" `
+    -Condition @(
+        New-AzAlertRuleAnyOfOrLeafCondition -Equal -Field "operationName" `
+            -Value "microsoft.resources/tags/write"
+    ) `
+    -ActionGroupId "<your-action-group-id>" `
+    -Description "Alert when subscription tags are modified"
