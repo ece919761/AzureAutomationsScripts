@@ -1,0 +1,40 @@
+{
+  "mode": "All",
+  "displayName": "Deny-Subscription-Tag-Modification",
+  "description": "Prevents all users from adding, modifying, or removing any tag at subscription scope.",
+  "policyRule": {
+    "if": {
+      "field": "type",
+      "equals": "Microsoft.Resources/subscriptions"
+    },
+    "then": {
+      "effect": "deny"
+    }
+  }
+}
+
+
+==================================
+
+
+If you want to be more surgical (deny only specific tags from changing)"
+
+
+{
+  "mode": "All",
+  "displayName": "Deny-Specific-Tag-Changes-At-Subscription",
+  "policyRule": {
+    "if": {
+      "allOf": [
+        { "field": "type", "equals": "Microsoft.Resources/subscriptions" },
+        {
+          "anyOf": [
+            { "field": "tags['CostCenter']", "exists": "true" },
+            { "field": "tags['Environment']", "exists": "true" }
+          ]
+        }
+      ]
+    },
+    "then": { "effect": "deny" }
+  }
+}
