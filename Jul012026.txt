@@ -19,3 +19,14 @@
     }
   ]
 }
+
+
+
+================\
+
+# OR if you already know the policy definition ID
+$PolicyId = "/providers/Microsoft.Authorization/policyDefinitions/345fa903-145c-4fe1-8bcd-93ec2adccde8"
+
+Get-AzPolicyDefinition -Id $PolicyId |
+    ConvertTo-Json -Depth 20 |
+    Out-File ".\BackupPolicy.json" -Encoding utf8
