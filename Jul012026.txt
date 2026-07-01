@@ -1,0 +1,21 @@
+{
+  "code": "DeploymentFailed",
+  "target": "/subscriptions/05a421fe-7473-4068-8639-747fdb59761c/resourceGroups/rg-azuam-avd-fulldesktop-compute/providers/Microsoft.Resources/deployments/PolicyDeployment_5370697977547976787",
+  "message": "At least one resource deployment operation failed. Please list deployment operations for details. Please see https://aka.ms/arm-deployment-operations for usage details.",
+  "details": [
+    {
+      "code": "InvalidTemplate",
+      "message": "Unable to process template language expressions for resource '/subscriptions/05a421fe-7473-4068-8639-747fdb59761c/resourceGroups/rg-azuAM-AVD-Backup/providers/Microsoft.Resources/deployments/backup-deploy-testamKrishnaD' at line '1' and column '2285'. 'The template parameter 'vaultName' is not found. Please see https://aka.ms/arm-syntax-parameters for usage details.'",
+      "additionalInfo": [
+        {
+          "type": "TemplateViolation",
+          "info": {
+            "lineNumber": 1,
+            "linePosition": 2285,
+            "path": ""
+          }
+        }
+      ]
+    }
+  ]
+}
