@@ -166,3 +166,79 @@ $SqlConnection = New-Object System.Data.SqlClient.SqlConnection
 $SqlConnection.ConnectionString = "Server=$SQL_Server_Name;" +
                                   "Database=$SQL_DB_Name;" +
                                   "User ID=$($SQLServerCred.UserName);" +
+                                  "Password=$($SQLServerCred.GetNetworkCredential().Password);" +
+                                  "Encrypt=True;TrustServerCertificate=False;" +
+                                  "Connection Timeout=30;"
+try {
+    $SqlConnection.Open()
+    Write-Output "  Connection opened."
+}
+catch {
+    Write-Error "SQL connection failed: $_"
+    exit 1
+}
+
+# ── Step 3: Truncate ──────────────────────────────────────────────────────
+Write-Output "`n[Step 3] Truncating dbo.AzureVmSkuPricing..."
+
+$TruncateCmd             = $SqlConnection.CreateCommand()
+$TruncateCmd.CommandText = "TRUNCATE TABLE dbo.AzureVmSkuPricing"
+
+try {
+    $TruncateCmd.ExecuteNonQuery() | Out-Null
+    Write-Output "  Table truncated."
+}
+catch {
+    Write-Error "TRUNCATE failed: $_"
+    $SqlConnection.Close()
+    exit 1
+}
+
+# ── Step 4: Insert Linux pricing rows ────────────────────────────────────
+Write-Output "`n[Step 4] Inserting $FoundCount Linux pricing rows..."
+
+$InsertCmd             = $SqlConnection.CreateCommand()
+$InsertCmd.CommandText = @"
+INSERT INTO dbo.AzureVmSkuPricing (VmSkuName, PricePerHour)
+VALUES (@VmSkuName, @PricePerHour)
+"@
+
+$null = $InsertCmd.Parameters.Add("@VmSkuName",    [System.Data.SqlDbType]::NVarChar, 100)
+$null = $InsertCmd.Parameters.Add("@PricePerHour", [System.Data.SqlDbType]::Decimal)
+$InsertCmd.Parameters["@PricePerHour"].Precision = 10
+$InsertCmd.Parameters["@PricePerHour"].Scale     = 6
+
+$InsertedCount = 0
+foreach ($Row in $PricingResults | Where-Object { $_.Found }) {
+    $InsertCmd.Parameters["@VmSkuName"].Value    = $Row.VmSkuName
+    $InsertCmd.Parameters["@PricePerHour"].Value = $Row.PricePerHour
+
+    try {
+        $InsertCmd.ExecuteNonQuery() | Out-Null
+        $InsertedCount++
+        Write-Output ("  Inserted: {0,-25} `${1}/hr" -f $Row.VmSkuName, $Row.PricePerHour)
+    }
+    catch {
+        Write-Warning "  Insert failed for '$($Row.VmSkuName)': $_"
+    }
+}
+
+$SqlConnection.Close()
+Write-Output "`n  SQL connection closed."
+
+#endregion
+
+#region ── Summary ──────────────────────────────────────────────────────────
+
+Write-Output "`n========================================"
+Write-Output "REFRESH COMPLETE"
+Write-Output "Timestamp     : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC"
+Write-Output "OS Filter     : $OSType (no Windows licensing cost)"
+Write-Output "Region        : $Region"
+Write-Output "Rows inserted : $InsertedCount / $($TargetSkus.Count)"
+if ($MissingSkus) {
+    Write-Output "Missing SKUs  : $($MissingSkus -join ', ')"
+}
+Write-Output "========================================"
+
+#endregion
