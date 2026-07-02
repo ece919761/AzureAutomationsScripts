@@ -1,38 +1,30 @@
 <#
 .SYNOPSIS
-    Monthly VM SKU pricing refresh — Linux compute price only (no OS licensing).
-    Truncates AzureVmSkuPricing and repopulates from Azure Retail Prices API
-    for West Europe region.
+    Monthly Linux VM SKU pricing refresh — dynamically discovers all unique Linux VM
+    SKUs in use across the tenant, fetches West Europe Pay-As-You-Go hourly pricing
+    from the Azure Retail Prices API, and persists results to dbo.AzureVmSkuPricing.
 
-.SCHEDULE
-    1st of every month at 00:30 UTC
+.DESCRIPTION
+    Runs on the 1st of every month at 00:30 UTC. Replaces the static SKU list with
+    a live inventory scan across all enabled subscriptions in the tenant. Only Linux
+    VM SKUs are priced — Windows OS licensing cost is explicitly excluded.
+
+.NOTES
+    Version : 2.0
+    Owner   : Cloud Operations Team
+    Schedule: 1st of every month at 00:30 UTC
 #>
 
 #region ── Configuration ────────────────────────────────────────────────────
 
-$SQL_Server_Name = Get-AutomationVariable    -Name "SQL_Server_Name"
-$SQL_DB_Name     = Get-AutomationVariable    -Name "SQL_DB_Name"
+$SQL_Server_Name = Get-AutomationVariable     -Name "SQL_Server_Name"
+$SQL_DB_Name     = Get-AutomationVariable     -Name "SQL_DB_Name"
 $SQLServerCred   = Get-AutomationPSCredential -Name "SQLServerCred"
 
 $PricingApiUrl = "https://prices.azure.com/api/retail/prices"
 $ApiVersion    = "2023-01-01-preview"
 $Region        = "westeurope"
-$OSType        = "Linux"   # Controls filtering — bare compute, no Windows licensing
-
-# ✏️ ADD / REMOVE SKUs here as needed
-$TargetSkus = @(
-    "Standard_B2s",
-    "Standard_B4ms",
-    "Standard_D2s_v3",
-    "Standard_D4s_v3",
-    "Standard_D8s_v3",
-    "Standard_D2s_v5",
-    "Standard_D4s_v5",
-    "Standard_E4s_v3",
-    "Standard_E8s_v3",
-    "Standard_F4s_v2",
-    "Standard_F8s_v2"
-)
+$OSType        = "Linux"
 
 #endregion
 
@@ -46,12 +38,6 @@ function Get-LinuxVmSkuPrice {
         [string]$ApiVersion
     )
 
-    # API-level filter:
-    # - armSkuName       → exact SKU match
-    # - armRegionName    → West Europe
-    # - priceType        → Consumption (Pay-As-You-Go, not Reservation)
-    # - serviceName      → Virtual Machines only
-    # - not Windows      → exclude Windows OS licensed meters at source
     $Filter = "armSkuName eq '$SkuName' " +
               "and armRegionName eq '$Region' " +
               "and priceType eq 'Consumption' " +
@@ -65,15 +51,10 @@ function Get-LinuxVmSkuPrice {
         $Response = Invoke-RestMethod -Uri $Uri -Method GET -ContentType "application/json"
 
         if ($Response.Items -and $Response.Items.Count -gt 0) {
-
-            # Local safety filter — belt and braces:
-            # Keep only rows where skuName has NO OS suffix
-            # Linux rows appear as e.g. "D4s v3", "D4s v5"
-            # Windows rows appear as e.g. "D4s v3 Windows", "D4s v5 Windows"
             $LinuxItem = $Response.Items | Where-Object {
-                $_.skuName        -notmatch "Windows|Low Priority|Spot" -and
-                $_.meterName      -notmatch "Windows|Low Priority|Spot" -and
-                $_.unitOfMeasure  -eq "1 Hour"
+                $_.skuName       -notmatch "Windows|Low Priority|Spot" -and
+                $_.meterName     -notmatch "Windows|Low Priority|Spot" -and
+                $_.unitOfMeasure -eq "1 Hour"
             } | Select-Object -First 1
 
             if ($LinuxItem) {
@@ -85,30 +66,22 @@ function Get-LinuxVmSkuPrice {
                     Found        = $true
                 }
             }
-
-            Write-Warning "  API returned results for '$SkuName' but none matched Linux/standard filter."
+            Write-Warning "  Results returned for '$SkuName' but none matched Linux/standard filter."
         }
         else {
-            Write-Warning "  No results returned from API for SKU: $SkuName"
-        }
-
-        return [PSCustomObject]@{
-            VmSkuName    = $SkuName
-            PricePerHour = 0
-            MeterName    = $null
-            SkuNameRaw   = $null
-            Found        = $false
+            Write-Warning "  No API results for SKU: $SkuName (may not be available in $Region)"
         }
     }
     catch {
-        Write-Warning "  API call failed for SKU '$SkuName': $_"
-        return [PSCustomObject]@{
-            VmSkuName    = $SkuName
-            PricePerHour = 0
-            MeterName    = $null
-            SkuNameRaw   = $null
-            Found        = $false
-        }
+        Write-Warning "  API call failed for '$SkuName': $_"
+    }
+
+    return [PSCustomObject]@{
+        VmSkuName    = $SkuName
+        PricePerHour = 0
+        MeterName    = $null
+        SkuNameRaw   = $null
+        Found        = $false
     }
 }
 
@@ -120,15 +93,82 @@ Write-Output "========================================"
 Write-Output "VM SKU Pricing Refresh ($OSType Only)"
 Write-Output "Timestamp : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC"
 Write-Output "Region    : $Region"
-Write-Output "SKU Count : $($TargetSkus.Count)"
 Write-Output "========================================"
 
-# ── Step 1: Fetch Linux pricing from API ─────────────────────────────────
-Write-Output "`n[Step 1] Fetching Linux compute prices from Azure Retail Prices API..."
+# ── Step 0: Discover all unique Linux VM SKUs across the tenant ───────────
+Write-Output "`n[Step 0] Discovering Linux VM SKUs across all subscriptions..."
+
+$DiscoveredSkus     = [System.Collections.Generic.List[string]]::new()
+$SubscriptionErrors = [System.Collections.Generic.List[string]]::new()
+
+# Get all enabled subscriptions in the tenant
+$AllSubscriptions = Get-AzSubscription | Where-Object { $_.State -eq "Enabled" }
+Write-Output "  Enabled subscriptions found: $($AllSubscriptions.Count)"
+
+# Save current context to restore after discovery
+$OriginalContext = Get-AzContext
+
+foreach ($Sub in $AllSubscriptions) {
+    try {
+        Write-Output "  Scanning: $($Sub.Name) ($($Sub.Id))"
+        Set-AzContext -SubscriptionId $Sub.Id -TenantId $Sub.TenantId -Force | Out-Null
+
+        # Get all VMs — filter to Linux OS only at source
+        $LinuxVMs = Get-AzVM | Where-Object {
+            $_.StorageProfile.OsDisk.OsType -eq "Linux"
+        }
+
+        if ($LinuxVMs -and $LinuxVMs.Count -gt 0) {
+            Write-Output "    Linux VMs found: $($LinuxVMs.Count)"
+
+            foreach ($VM in $LinuxVMs) {
+                $Sku = $VM.HardwareProfile.VmSize
+                if (-not [string]::IsNullOrWhiteSpace($Sku) -and
+                    -not $DiscoveredSkus.Contains($Sku)) {
+                    $DiscoveredSkus.Add($Sku)
+                    Write-Output "    + New SKU discovered: $Sku"
+                }
+            }
+        }
+        else {
+            Write-Output "    No Linux VMs found in this subscription."
+        }
+    }
+    catch {
+        $ErrMsg = "Failed to scan subscription '$($Sub.Name)': $_"
+        Write-Warning "  $ErrMsg"
+        $SubscriptionErrors.Add($ErrMsg)
+    }
+}
+
+# Restore original context
+if ($OriginalContext) {
+    Set-AzContext -Context $OriginalContext -Force | Out-Null
+}
+
+# Sort for clean logging
+$DiscoveredSkus = $DiscoveredSkus | Sort-Object
+
+Write-Output "`n  ── Discovery Summary ──────────────────────────"
+Write-Output "  Subscriptions scanned : $($AllSubscriptions.Count)"
+Write-Output "  Subscriptions errored : $($SubscriptionErrors.Count)"
+Write-Output "  Unique Linux SKUs found: $($DiscoveredSkus.Count)"
+foreach ($Sku in $DiscoveredSkus) {
+    Write-Output "    • $Sku"
+}
+
+# Safety guard — abort if no SKUs discovered
+if ($DiscoveredSkus.Count -eq 0) {
+    Write-Error "No Linux VM SKUs discovered across tenant. Aborting — table NOT truncated."
+    exit 1
+}
+
+# ── Step 1: Fetch Linux pricing from API for all discovered SKUs ──────────
+Write-Output "`n[Step 1] Fetching Linux prices from Azure Retail Prices API..."
 
 $PricingResults = [System.Collections.Generic.List[object]]::new()
 
-foreach ($Sku in $TargetSkus) {
+foreach ($Sku in $DiscoveredSkus) {
     Write-Output "  Querying: $Sku"
     $Result = Get-LinuxVmSkuPrice `
                 -SkuName    $Sku `
@@ -139,23 +179,24 @@ foreach ($Sku in $TargetSkus) {
     $PricingResults.Add($Result)
 
     if ($Result.Found) {
-        Write-Output ("    ✔ {0,-25} → `${1}/hr  [Meter: {2}]" -f $Sku, $Result.PricePerHour, $Result.MeterName)
-    } else {
-        Write-Warning "    ✘ $Sku → Not found"
+        Write-Output ("    ✔ {0,-30} → `${1}/hr  [Meter: {2}]" -f $Sku, $Result.PricePerHour, $Result.MeterName)
+    }
+    else {
+        Write-Warning "    ✘ $Sku → No Linux price found in $Region"
     }
 }
 
-$FoundCount  = ($PricingResults | Where-Object { $_.Found }).Count
+$FoundCount  = ($PricingResults | Where-Object {  $_.Found }).Count
 $MissingSkus = ($PricingResults | Where-Object { -not $_.Found }).VmSkuName
 
-Write-Output "`n  Prices fetched successfully : $FoundCount / $($TargetSkus.Count)"
+Write-Output "`n  Prices fetched successfully : $FoundCount / $($DiscoveredSkus.Count)"
 if ($MissingSkus) {
-    Write-Warning "  SKUs with no price returned : $($MissingSkus -join ', ')"
+    Write-Warning "  SKUs with no price in $Region : $($MissingSkus -join ', ')"
 }
 
-# Safety guard — do not truncate if API returned nothing
+# Safety guard — do not truncate if API returned nothing at all
 if ($FoundCount -eq 0) {
-    Write-Error "No Linux prices returned from API. Aborting — table NOT truncated."
+    Write-Error "No Linux prices returned from API for any SKU. Aborting — table NOT truncated."
     exit 1
 }
 
@@ -194,7 +235,7 @@ catch {
     exit 1
 }
 
-# ── Step 4: Insert Linux pricing rows ────────────────────────────────────
+# ── Step 4: Insert fresh pricing rows ────────────────────────────────────
 Write-Output "`n[Step 4] Inserting $FoundCount Linux pricing rows..."
 
 $InsertCmd             = $SqlConnection.CreateCommand()
@@ -216,7 +257,7 @@ foreach ($Row in $PricingResults | Where-Object { $_.Found }) {
     try {
         $InsertCmd.ExecuteNonQuery() | Out-Null
         $InsertedCount++
-        Write-Output ("  Inserted: {0,-25} `${1}/hr" -f $Row.VmSkuName, $Row.PricePerHour)
+        Write-Output ("  Inserted: {0,-30} `${1}/hr" -f $Row.VmSkuName, $Row.PricePerHour)
     }
     catch {
         Write-Warning "  Insert failed for '$($Row.VmSkuName)': $_"
@@ -232,12 +273,17 @@ Write-Output "`n  SQL connection closed."
 
 Write-Output "`n========================================"
 Write-Output "REFRESH COMPLETE"
-Write-Output "Timestamp     : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC"
-Write-Output "OS Filter     : $OSType (no Windows licensing cost)"
-Write-Output "Region        : $Region"
-Write-Output "Rows inserted : $InsertedCount / $($TargetSkus.Count)"
+Write-Output "Timestamp          : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC"
+Write-Output "OS Filter          : $OSType (no Windows licensing cost)"
+Write-Output "Region             : $Region"
+Write-Output "Subscriptions Scanned : $($AllSubscriptions.Count)"
+Write-Output "Unique SKUs Discovered: $($DiscoveredSkus.Count)"
+Write-Output "Rows Inserted      : $InsertedCount / $($DiscoveredSkus.Count)"
 if ($MissingSkus) {
-    Write-Output "Missing SKUs  : $($MissingSkus -join ', ')"
+    Write-Output "No Price in Region : $($MissingSkus -join ', ')"
+}
+if ($SubscriptionErrors.Count -gt 0) {
+    Write-Output "Subscription Errors: $($SubscriptionErrors.Count) — check warnings above"
 }
 Write-Output "========================================"
 
