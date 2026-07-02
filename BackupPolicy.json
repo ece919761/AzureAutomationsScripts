@@ -1,0 +1,26 @@
+{
+  "Description": "Enforce backup for all virtual machines by backing them up to an existing central recovery services vault in the same location and subscription as the virtual machine. Doing this is useful when there is a central team in your organization managing backups for all resources in a subscription. You can optionally include virtual machines containing a specified tag to control the scope of assignment. See https://aka.ms/AzureVMCentralBackupIncludeTag.",
+  "DisplayName": "Configure backup on virtual machines with a given tag to an existing recovery services vault in the same location",
+  "Id": "/providers/Microsoft.Authorization/policyDefinitions/345fa903-145c-4fe1-8bcd-93ec2adccde8",
+  "Metadata": {},
+  "Mode": "Indexed",
+  "Name": "345fa903-145c-4fe1-8bcd-93ec2adccde8",
+  "Parameter": {},
+  "PolicyRule": {},
+  "PolicyType": "BuiltIn",
+  "SystemDataCreatedAt": null,
+  "SystemDataCreatedBy": null,
+  "SystemDataCreatedByType": null,
+  "SystemDataLastModifiedAt": null,
+  "SystemDataLastModifiedBy": null,
+  "SystemDataLastModifiedByType": null,
+  "Type": "Microsoft.Authorization/policyDefinitions",
+  "Version": "9.5.0",
+  "Versions": [
+    "9.5.0",
+    "9.4.0",
+    "9.3.0",
+    "9.2.0",
+    "9.1.0"
+  ]
+}
