@@ -1,0 +1,191 @@
+<#
+.SYNOPSIS
+    Monthly VM SKU pricing refresh — truncates AzureVmSkuPricing table
+    and repopulates it from the Azure Retail Prices API for West Europe.
+
+.SCHEDULE
+    Run on 1st of every month at 00:30 UTC
+#>
+
+#region ── Configuration ────────────────────────────────────────────────────
+
+# SQL connection details — store these as Automation Account encrypted variables
+$SQL_Server_Name = Get-AutomationVariable -Name "SQL_Server_Name"
+$SQL_DB_Name     = Get-AutomationVariable -Name "SQL_DB_Name"
+$SQLServerCred   = Get-AutomationPSCredential -Name "SQLServerCred"
+
+# Azure Retail Prices API
+$PricingApiUrl = "https://prices.azure.com/api/retail/prices"
+$ApiVersion    = "2023-01-01-preview"
+$Region        = "westeurope"
+
+# ✏️ ADD / REMOVE SKUs here as needed
+$TargetSkus = @(
+    "Standard_B2s",
+    "Standard_B4ms",
+    "Standard_D2s_v3",
+    "Standard_D4s_v3",
+    "Standard_D8s_v3",
+    "Standard_D2s_v5",
+    "Standard_D4s_v5",
+    "Standard_E4s_v3",
+    "Standard_E8s_v3",
+    "Standard_F4s_v2",
+    "Standard_F8s_v2"
+)
+
+#endregion
+
+#region ── Helper: Fetch price for a single SKU ─────────────────────────────
+
+function Get-VmSkuPrice {
+    param (
+        [string]$SkuName,
+        [string]$Region,
+        [string]$ApiUrl,
+        [string]$ApiVersion
+    )
+
+    $Filter = "armSkuName eq '$SkuName' " +
+              "and armRegionName eq '$Region' " +
+              "and priceType eq 'Consumption' " +
+              "and serviceName eq 'Virtual Machines'"
+
+    $Uri = "$ApiUrl`?api-version=$ApiVersion&`$filter=$([Uri]::EscapeDataString($Filter))"
+
+    try {
+        $Response = Invoke-RestMethod -Uri $Uri -Method GET -ContentType "application/json"
+
+        if ($Response.Items -and $Response.Items.Count -gt 0) {
+            # Filter out Spot and Low Priority meters — get standard Pay-As-You-Go only
+            $StandardItem = $Response.Items | Where-Object {
+                $_.meterName -notmatch "Spot|Low Priority" -and
+                $_.unitOfMeasure -eq "1 Hour"
+            } | Select-Object -First 1
+
+            if ($StandardItem) {
+                return [PSCustomObject]@{
+                    VmSkuName    = $SkuName
+                    PricePerHour = [decimal]$StandardItem.retailPrice
+                    Found        = $true
+                }
+            }
+        }
+
+        Write-Warning "No standard consumption price found for SKU: $SkuName"
+        return [PSCustomObject]@{ VmSkuName = $SkuName; PricePerHour = 0; Found = $false }
+    }
+    catch {
+        Write-Warning "API call failed for SKU '$SkuName': $_"
+        return [PSCustomObject]@{ VmSkuName = $SkuName; PricePerHour = 0; Found = $false }
+    }
+}
+
+#endregion
+
+#region ── Main ─────────────────────────────────────────────────────────────
+
+Write-Output "========================================"
+Write-Output "VM SKU Pricing Refresh — $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Output "Region  : $Region"
+Write-Output "SKU Count: $($TargetSkus.Count)"
+Write-Output "========================================"
+
+# Step 1 — Fetch pricing from API for all target SKUs
+Write-Output "`n[Step 1] Fetching prices from Azure Retail Prices API..."
+$PricingResults = [System.Collections.Generic.List[object]]::new()
+
+foreach ($Sku in $TargetSkus) {
+    Write-Output "  Querying: $Sku"
+    $Result = Get-VmSkuPrice -SkuName $Sku -Region $Region -ApiUrl $PricingApiUrl -ApiVersion $ApiVersion
+    $PricingResults.Add($Result)
+
+    if ($Result.Found) {
+        Write-Output "    ✔ $Sku → `$$($Result.PricePerHour)/hr"
+    } else {
+        Write-Warning "    ✘ $Sku → No price found"
+    }
+}
+
+$FoundCount = ($PricingResults | Where-Object { $_.Found }).Count
+Write-Output "`n  Prices fetched: $FoundCount / $($TargetSkus.Count)"
+
+if ($FoundCount -eq 0) {
+    Write-Error "No prices returned from API. Aborting — table will NOT be truncated."
+    exit 1
+}
+
+# Step 2 — Connect to SQL and truncate + repopulate
+Write-Output "`n[Step 2] Connecting to SQL Server: $SQL_Server_Name / $SQL_DB_Name"
+
+$SqlConnection = New-Object System.Data.SqlClient.SqlConnection
+$SqlConnection.ConnectionString = "Server=$SQL_Server_Name;" +
+                                  "Database=$SQL_DB_Name;" +
+                                  "User ID=$($SQLServerCred.UserName);" +
+                                  "Password=$($SQLServerCred.GetNetworkCredential().Password);" +
+                                  "Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+try {
+    $SqlConnection.Open()
+    Write-Output "  SQL connection opened successfully."
+}
+catch {
+    Write-Error "Failed to connect to SQL Server: $_"
+    exit 1
+}
+
+# Step 3 — Truncate the table (only if we have data, guard above covers this)
+Write-Output "`n[Step 3] Truncating AzureVmSkuPricing table..."
+$TruncateCmd = $SqlConnection.CreateCommand()
+$TruncateCmd.CommandText = "TRUNCATE TABLE dbo.AzureVmSkuPricing"
+try {
+    $TruncateCmd.ExecuteNonQuery() | Out-Null
+    Write-Output "  Table truncated successfully."
+}
+catch {
+    Write-Error "TRUNCATE failed: $_"
+    $SqlConnection.Close()
+    exit 1
+}
+
+# Step 4 — Insert fresh pricing rows
+Write-Output "`n[Step 4] Inserting $FoundCount pricing rows..."
+
+$InsertCmd = $SqlConnection.CreateCommand()
+$InsertCmd.CommandText = @"
+INSERT INTO dbo.AzureVmSkuPricing (VmSkuName, PricePerHour)
+VALUES (@VmSkuName, @PricePerHour)
+"@
+
+$null = $InsertCmd.Parameters.Add("@VmSkuName",    [System.Data.SqlDbType]::NVarChar, 100)
+$null = $InsertCmd.Parameters.Add("@PricePerHour", [System.Data.SqlDbType]::Decimal)
+$InsertCmd.Parameters["@PricePerHour"].Precision = 10
+$InsertCmd.Parameters["@PricePerHour"].Scale     = 6
+
+$InsertedCount = 0
+foreach ($Row in $PricingResults | Where-Object { $_.Found }) {
+    $InsertCmd.Parameters["@VmSkuName"].Value    = $Row.VmSkuName
+    $InsertCmd.Parameters["@PricePerHour"].Value = $Row.PricePerHour
+
+    try {
+        $InsertCmd.ExecuteNonQuery() | Out-Null
+        $InsertedCount++
+    }
+    catch {
+        Write-Warning "  Insert failed for '$($Row.VmSkuName)': $_"
+    }
+}
+
+$SqlConnection.Close()
+Write-Output "  SQL connection closed."
+
+#endregion
+
+#region ── Summary ──────────────────────────────────────────────────────────
+
+Write-Output "`n========================================"
+Write-Output "COMPLETE — $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Output "Rows inserted : $InsertedCount / $($TargetSkus.Count)"
+Write-Output "SKUs not found: $(($PricingResults | Where-Object { -not $_.Found }).VmSkuName -join ', ')"
+Write-Output "========================================"
+
+#endregion
