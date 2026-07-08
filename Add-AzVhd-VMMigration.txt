@@ -1,0 +1,1 @@
+Add-AzVhd -LocalFilePath "C:\Users\KDhara\OneDrive - HARMAN\Documents\Projects\SoundUnited\OSdisk.vhd" -Destination https://stagingforvmmig.blob.core.windows.net/vhds/GBEUUTIL1-OSdisk-fixed.vhd -ResourceGroupName "rg-azuAM-GenericServers" -StorageAccountName "stagingforvmmig" -NumberOfUploaderThreads 8
