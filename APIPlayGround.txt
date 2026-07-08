@@ -1,0 +1,12 @@
+API endpoint: https://management.azure.com/
+PUT
+Eg: /subscriptions/6c7c20dc-b7c0-431b-9e54-f761f424cc4c/resourceGroups/rg-azuVA-PRD-OrderManagement/providers/Microsoft.Web/connections/keyvault?api-version=2018-07-01-preview
+
+
+RequestHeader add below:
+Name: content-Type
+Value: application/json
+
+=========================
+
+https://learn.microsoft.com/en-us/rest/api/logic/workflows/create-or-update?view=rest-logic-2019-05-01&tabs=HTTP
