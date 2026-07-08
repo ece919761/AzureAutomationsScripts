@@ -1,0 +1,1 @@
+.\AzCopy copy "SnapShrtExportURL" "DestinationStorageAccountURLwithSASToekn"
