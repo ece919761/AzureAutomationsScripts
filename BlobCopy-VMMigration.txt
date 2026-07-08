@@ -1,0 +1,25 @@
+# Configuration
+$subscriptionId     = "9cae7621-d1c5-437c-8605-fb57aeec0545"
+$resourceGroupName  = "RG-SUN-UW1-PRD-SW"
+$snapshotName       = "uw1prdsuswpdm_datadisk1-Apr282026"
+$sasExpiryDuration  = 18000   # 1 hour
+$storageAccountName = "stagingncusforvhdblob"
+$storageAccRG = "RG-SUN-UW1-PRD-SW"
+$storageContainerName = "vhds"
+$destinationVhdName = "uw1prdsuswpdm_datadisk1.vhd"
+
+# Set context
+Select-AzSubscription -SubscriptionId $subscriptionId
+
+# Grant read access to the snapshot and get SAS
+$sas = Grant-AzSnapshotAccess -ResourceGroupName $resourceGroupName -SnapshotName $snapshotName -DurationInSecond $sasExpiryDuration -Access Read
+
+# Get storage account context
+$storageAccountKey = (Get-AzStorageAccountKey -ResourceGroupName $storageAccRG -Name $storageAccountName)[0].Value
+$ctx = New-AzStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
+
+# Start blob copy (snapshot → VHD blob)
+Start-AzStorageBlobCopy -AbsoluteUri $sas.AccessSAS -DestContainer $storageContainerName -DestContext $ctx -DestBlob $destinationVhdName
+
+#Get the progress of the blob copy 
+Get-AzStorageBlobCopyState -Blob $destinationVhdName -Container $storageContainerName -Context $ctx
