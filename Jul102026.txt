@@ -1,0 +1,5 @@
+we would appreciate guidance on the following:
+1.	Required Microsoft Graph API permissions for the VULTURE application.
+2.	Steps to generate Microsoft Graph access tokens using Microsoft Entra ID (Client Credentials Flow).
+3.	Recommended approach for accessing SharePoint Online document libraries through Microsoft Graph APIs.
+4.	Any additional configuration or admin consent requirements needed to perform upload/download operations against the designated SharePoint folder structure.
