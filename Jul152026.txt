@@ -1,0 +1,7 @@
+We have a Azure Function App - func-cash-apps which contains certain triggers to run a job. One of them is a HTTP trigger.
+We have a power app flow to trigger this HTTP trigger when user accepts the approval. 
+ 
+ 
+Since the public access is disabled on function app, it doesn't allow the power app flow to call this trigger and return 403 - forbidden IP error.
+ 
+Is there a way we can allow power automate flow to connect to this function app for this?
