@@ -1,0 +1,16 @@
+{
+  "api": {
+    "oauth2PermissionScopes": [
+      {
+        "id": "22abcf79-60c3-48ef-a2b9-30cdf12c3582",
+        "value": "mcp.tools",
+        "type": "User",
+        "isEnabled": true,
+        "adminConsentDisplayName": "Invoke Lessons Learned MCP tools",
+        "adminConsentDescription": "Allows the client (Copilot Studio) to call the Lessons Learned MCP server tools on behalf of the signed-in user.",
+        "userConsentDisplayName": "Invoke Lessons Learned MCP tools",
+        "userConsentDescription": "Allows this app to call the Lessons Learned MCP server tools on your behalf."
+      }
+    ]
+  }
+}

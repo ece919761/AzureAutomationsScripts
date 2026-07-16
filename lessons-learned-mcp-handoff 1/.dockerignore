@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.git
+.github
+.azure
+infra
+tests
+Resources
+*.md
+.env*
+.gitignore
+.dockerignore
+vitest.config.ts
+tsconfig.test.json

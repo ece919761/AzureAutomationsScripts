@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "value": "${AZURE_LOCATION}" },
+    "environmentName": { "value": "${AZURE_ENV_NAME}" },
+    "deploymentMode": { "value": "${DEPLOYMENT_MODE=public}" },
+    "providerMode": { "value": "${PROVIDER_MODE=representative}" },
+    "authMode": { "value": "${AUTH_MODE=oauth}" },
+    "namingPrefix": { "value": "${NAMING_PREFIX=harman-ll}" },
+    "resourceGroupName": { "value": "${AZURE_RESOURCE_GROUP=}" },
+    "entraTenantId": { "value": "${ENTRA_TENANT_ID=}" },
+    "mcpApiClientId": { "value": "${MCP_API_CLIENT_ID=}" },
+    "mcpApiAudience": { "value": "${MCP_API_AUDIENCE=}" },
+    "jiraBaseUrl": { "value": "${JIRA_BASE_URL=}" },
+    "jiraProjectKey": { "value": "${JIRA_PROJECT_KEY=}" },
+    "jiraPatSecretName": { "value": "${JIRA_PAT_SECRET_NAME=jira-pat}" },
+    "vnetAddressSpace": { "value": "${VNET_ADDRESS_SPACE=10.20.0.0/16}" },
+    "containerImageTag": { "value": "${SERVICE_MCP_IMAGE_NAME=latest}" },
+    "principalId": { "value": "${AZURE_PRINCIPAL_ID=}" }
+  }
+}
