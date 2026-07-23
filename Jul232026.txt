@@ -1,0 +1,1 @@
+The client 'ssanka3.sso@harman.com' with object id '3b233647-d4ab-4af4-b4b5-435da7495947' does not have authorization to perform action 'Microsoft.CostManagementExports/register/action' over scope '/subscriptions/f088d92f-5d65-44ad-b9e4-3e9fc800372f' or the scope is invalid. If access was recently granted, please refresh your credentials. (Code: AuthorizationFailed)
