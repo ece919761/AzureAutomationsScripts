@@ -1,0 +1,17 @@
+Hi [Name],
+
+I'm reaching out from the Azure Cloud Operations team. Thanks for raising this — here's the justification for the ALZ_ProjectContributor custom role and how it's governed.
+
+Purpose: This role was created to give project members the specific permissions they need to work within their subscription, without granting them broader built-in roles like Contributor or Owner. It follows least-privilege principles by scoping access to only the actions required for day-to-day project work.
+
+Assignment model:
+- The role is assigned at the subscription level to an Azure AD security group, not to individual users directly.
+- Group membership is owned and managed by the respective Subscription Owner, who is accountable for knowing who's on their project and approving access.
+- Cloud Operations defines and maintains the role itself (permissions, scope), while Subscription Owners manage who gets access through group membership — keeping role design and access approval clearly separated.
+- This keeps access reviews and onboarding/offboarding centralized to the group, rather than requiring RBAC changes for every individual, which reduces the chance of stale or orphaned role assignments.
+
+Prior alignment: This approach was reviewed and discussed with the Security team on [date/reference if available], and was accepted as our standard pattern for project-level access across subscriptions.
+
+Happy to walk through the specific permission set in the role definition, or provide the list of subscriptions/groups this applies to, if that helps with your review.
+
+Let me know if you need anything else from my side.
