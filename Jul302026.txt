@@ -1,0 +1,9 @@
+az sql db import \
+  --resource-group <RG> \
+  --server <server-name> \
+  --name <database-name> \
+  --admin-user <admin> \
+  --admin-password <password> \
+  --storage-key <storage-account-key> \
+  --storage-key-type StorageAccessKey \
+  --storage-uri https://<storageaccount>.blob.core.windows.net/<container>/<db-name>.bacpac
