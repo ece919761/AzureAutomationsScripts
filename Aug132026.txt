@@ -1,2 +1,28 @@
 These are some topics I covered based on his resume mentions.  
 I always prefer to cover these topics first to understand their knowledge on mentioned topics and try to cover others as possible and time permits. Please advise if I must be specific with particular topics only as per JD.
+===
+
+Activities/Project Update:
+ 
+•	All Lifestyle Azure Subscriptions are added with the SBU tag as Lifestyle – Pro/Lifestyle – Consumer/Lifestyle - SoundUnited.
+•	Backup policy Tag updated on all newly Migrated VM’s in SoundUnited.
+•	1 ChatGPT subscription has been created (ChatGPT – HarmanIndustrialDesign)
+•	Non-compliance resource percentage is now reduced to 36.11% since last week.
+•	3 Azure Apps are created for Teams backup enhancement as recommended by Commvault. 1 Azure APP(MENDIX COPILOT STUDIO AGENT CONNECTOR) is created for Mendix-POC in Test Tenant
+•	Automotive Data Platform:
+o	Osmos connection access has been provided, Brown, Aaron has marked as owner, so that in future it can be manged by him.
+o	Application Named "SPN-Auto-EU-PowerApp-API-Dev" has been registered.
+o	Fabric KT sessions with Nagendra are completed
+o	 Application named "RBCC Sample Tracking" has been registered in Entra, access to Auto-PROD-Gold-Component360 workspace has been provided.
+o	SPN named "SPN-Fabric-Confluence-Integration-Application" has been registered.
+o	Fabric capacity rejection threshold has been changed to 100% and recovery threshold to 10%, Fabric capacity utilization alert notification threshold has been changed as requested.
+o	Service user has been created for fabric shortcut authentication to AWS S3 bucket.
+•	AFS Replication provault is completed and waiting for confirmation from wintel team to migrate the remaining 37TB data from AWS Drives to Azure Files storage. 
+•	SU Integration:
+o	2 Logic Apps dependent on on-prem data gateway have been moved to West Europe region. 3 more logic Apps identified for re-migration which has dependencies.
+o	11 VM’s are migrated from SoundUnited(This includes NAV Dev Servers)
+ 
+Risk/Issues/Gap/Mitigation:
+ 
+N/A
+
