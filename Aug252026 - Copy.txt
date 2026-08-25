@@ -1,0 +1,131 @@
+$sourcePath = "D:\LocalData\ToUpload"       # your actual local folder
+$destinationUrl = "https://<storageaccount>.file.core.windows.net/<share>?<SAS-token>"  # your target + SAS token
+$mirrorDestination = $false                 # $true = deletes at destination what's gone from source
+
+
+
+======================
+
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    Scheduled task script to sync data from a local server folder to an Azure Storage Account
+    (Blob container or File Share) using AzCopy, with logging and a summary report saved to Desktop.
+
+.NOTES
+    - Designed to be called by Windows Task Scheduler.
+    - Requires AzCopy to be installed and accessible (update $azCopyPath below if not in PATH).
+    - Uses a SAS token for authentication. For production, consider using a Managed Identity
+      (if running on an Azure VM) or azcopy login with a service principal instead of a SAS token
+      hardcoded in this script.
+#>
+
+# ============================
+# CONFIGURATION - EDIT THESE
+# ============================
+
+# Path to azcopy.exe (leave as "azcopy" if it's in your system PATH)
+$azCopyPath = "azcopy"
+
+# Local source folder to copy from
+$sourcePath = "D:\LocalData\ToUpload"
+
+# Azure Storage destination - Blob container example:
+# $destinationUrl = "https://<storageaccount>.blob.core.windows.net/<container>?<SAS-token>"
+# Azure Files share example:
+$destinationUrl = "https://<storageaccount>.file.core.windows.net/<share>?<SAS-token>"
+
+# Folder on Desktop where logs/output summary will be saved
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+$outputFolder = Join-Path $desktopPath "AzCopy_Reports"
+
+# Sync mode: use $true for one-way mirror (deletes at destination what no longer exists at source)
+# Use $false for safer incremental copy (never deletes at destination)
+$mirrorDestination = $false
+
+# ============================
+# SCRIPT LOGIC - NO NEED TO EDIT BELOW
+# ============================
+
+# Ensure the output/report folder exists
+if (-not (Test-Path $outputFolder)) {
+    New-Item -ItemType Directory -Path $outputFolder -Force | Out-Null
+}
+
+$timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$logFile = Join-Path $outputFolder "AzCopy_Log_$timestamp.txt"
+$summaryFile = Join-Path $outputFolder "AzCopy_Summary_$timestamp.txt"
+
+Write-Output "=== AzCopy Scheduled Sync Started: $(Get-Date) ===" | Tee-Object -FilePath $logFile -Append
+
+# Build AzCopy arguments
+$azCopyArgs = @(
+    "sync"
+    "`"$sourcePath`""
+    "`"$destinationUrl`""
+    "--recursive=true"
+    "--delete-destination=$mirrorDestination"
+    "--log-level=INFO"
+)
+
+try {
+    # Run AzCopy and capture output
+    $process = Start-Process -FilePath $azCopyPath `
+        -ArgumentList $azCopyArgs `
+        -NoNewWindow `
+        -Wait `
+        -PassThru `
+        -RedirectStandardOutput "$outputFolder\azcopy_stdout_$timestamp.txt" `
+        -RedirectStandardError "$outputFolder\azcopy_stderr_$timestamp.txt"
+
+    $exitCode = $process.ExitCode
+
+    # Append stdout to the main log file
+    Get-Content "$outputFolder\azcopy_stdout_$timestamp.txt" | Add-Content -Path $logFile
+
+    if ($exitCode -eq 0) {
+        $status = "SUCCESS"
+    }
+    else {
+        $status = "FAILED (Exit Code: $exitCode)"
+        # Also append stderr for troubleshooting if the job failed
+        Get-Content "$outputFolder\azcopy_stderr_$timestamp.txt" | Add-Content -Path $logFile
+    }
+}
+catch {
+    $status = "ERROR: $($_.Exception.Message)"
+    $exitCode = -1
+}
+
+$endTime = Get-Date
+Write-Output "=== AzCopy Scheduled Sync Finished: $endTime ===" | Tee-Object -FilePath $logFile -Append
+
+# ============================
+# BUILD SUMMARY REPORT
+# ============================
+
+$summaryContent = @"
+AzCopy Scheduled Sync - Summary Report
+========================================
+Run Timestamp   : $timestamp
+Source Path     : $sourcePath
+Destination     : $($destinationUrl -replace '\?.*', '?<SAS-token-hidden>')
+Status          : $status
+Exit Code       : $exitCode
+Full Log File   : $logFile
+========================================
+"@
+
+$summaryContent | Out-File -FilePath $summaryFile -Encoding UTF8
+
+Write-Output $summaryContent
+
+# ============================
+# OPTIONAL: CLEAN UP OLD LOGS (keeps last 30 days)
+# ============================
+Get-ChildItem -Path $outputFolder -Filter "*.txt" |
+    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
+# Exit with AzCopy's exit code so Task Scheduler can detect failure correctly
+exit $exitCode
