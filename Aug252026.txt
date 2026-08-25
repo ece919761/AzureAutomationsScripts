@@ -1,0 +1,14 @@
+Thank you for sharing the details via Teams Chat. Please review and confirm
+
+1.	Environment type: Development, Test, or Production? All 3 env.-For now we need Dev and later all the environments
+2.	Highest data classification: Public, Internal, or Sensitive? Internal Data
+3.	Will it integrate with a HARMAN internal system? If yes, specify the system. Yes, Harman Data Product hosted on Fabric
+4.	Will it integrate with an external or third-party system? If yes, specify the system and data exchanged. No 3rd Party
+5.	Will it use a custom connector, custom API, or externally exposed API? If yes, describe it.  No
+
+Please also let us know in which region Power Platform environment should be created. By default, it is US. 
+Please share us the project name based on which the environment name would be created. Eg: Auto XXXXXXX – Dev (XXXXX refers to project name)
+We will be creating a new Resource Group named: rg-billing-PowerPlatform in  ‘Automotive Data Platform’  subscription forBilling.
+You will be granted System Administrator role on this environment, so you should be able to fully manage it.
+
+Meanwhile, please also create a SR to create an environment and map it to the billing subscription. From the subscription drop-down menu, select the subscription you've provided in Teams Chat for billing mapping.
