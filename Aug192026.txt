@@ -1,0 +1,14 @@
+$headers = @{
+    "Content-Type" = "application/json"
+    "api-key" = "<your-api-key>"
+}
+$body = @{
+    messages = @(
+        @{ role = "system"; content = "You are a helpful assistant." },
+        @{ role = "user"; content = "Say hello in one sentence." }
+    )
+    max_tokens = 50
+} | ConvertTo-Json -Depth 3
+
+Invoke-RestMethod -Uri "https://<resource-name>.openai.azure.com/openai/deployments/<deployment-name>/chat/completions?api-version=2024-10-21" `
+  -Method Post -Headers $headers -Body $body
